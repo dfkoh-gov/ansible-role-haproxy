@@ -16,41 +16,38 @@ global
 
 defaults
   log global
-  mode  http
-  option  httplog
-  option  dontlognull
-{% if haproxy_version == '1.4' %}
-        contimeout 5000
-        clitimeout 50000
-        srvtimeout 50000
-{% else %}
-        timeout connect 5000
-        timeout client 50000
-        timeout server 50000
-{% endif %}
-{% if ansible_os_family == 'Debian' %}
-  errorfile 400 /etc/haproxy/errors/400.http
-  errorfile 403 /etc/haproxy/errors/403.http
-  errorfile 408 /etc/haproxy/errors/408.http
-  errorfile 500 /etc/haproxy/errors/500.http
-  errorfile 502 /etc/haproxy/errors/502.http
-  errorfile 503 /etc/haproxy/errors/503.http
-  errorfile 504 /etc/haproxy/errors/504.http
-{% endif %}
+  mode  tcp 
+  retries  3
+  timeout http-request    10s
+  timeout queue           1m
+  timeout connect         10s
+  timeout client          1m
+  timeout server          1m
+  timeout http-keep-alive 10s
+  timeout check           5s
 
-frontend {{ haproxy_frontend_name }}
-    bind {{ haproxy_frontend_bind_address }}:{{ haproxy_frontend_port }}
-    mode {{ haproxy_frontend_mode }}
-    default_backend {{ haproxy_backend_name }}
+resolvers local_dns
+    nameserver local_nameserver ${NAMESERVER_HOST}:53
+    hold valid 1s
 
-backend {{ haproxy_backend_name }}
-    mode {{ haproxy_backend_mode }}
-    balance {{ haproxy_backend_balance_method }}
-    option forwardfor
-{% if haproxy_backend_httpchk != '' %}
-    option httpchk {{ haproxy_backend_httpchk }}
-{% endif %}
-    cookie SERVERID insert indirect
-{% for backend in haproxy_backend_servers %}
-    server {{ backend.name }} {{ backend.address }} cookie {{ backend.name }} check
-{% endfor %}
+frontend http
+    bind :::80 v4v6
+    default_backend local_http
+
+frontend https
+    bind :::443 v4v6
+    default_backend local_https
+
+# Backend resolvers use the locally configured DNS resolver, and sets the
+# health check to happen every second, so that we can do a DNS CNAME-based
+# cutover at will.
+#
+# Without this setup, HAProxy will just resolve the hostname on startup
+# See https://serverfault.com/questions/681000/force-haproxy-to-lookup-dns-for-backend-server
+# 
+backend local_http
+    server app_http ${APP_HOST}:80 resolvers local_dns check inter 1000
+
+backend local_https
+    server app_https ${APP_HOST}:443 resolvers local_dns check inter 1000
+
